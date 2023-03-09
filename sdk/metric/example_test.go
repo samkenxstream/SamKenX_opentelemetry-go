@@ -18,10 +18,10 @@ import (
 	"context"
 	"log"
 
-	"go.opentelemetry.io/otel/metric/global"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 func Example() {
@@ -34,15 +34,15 @@ func Example() {
 	// information about how to create and use Resources.
 	res := resource.NewWithAttributes(
 		semconv.SchemaURL,
-		semconv.ServiceNameKey.String("my-service"),
-		semconv.ServiceVersionKey.String("v0.1.0"),
+		semconv.ServiceName("my-service"),
+		semconv.ServiceVersion("v0.1.0"),
 	)
 
 	meterProvider := metric.NewMeterProvider(
 		metric.WithResource(res),
 		metric.WithReader(reader),
 	)
-	global.SetMeterProvider(meterProvider)
+	otel.SetMeterProvider(meterProvider)
 	defer func() {
 		err := meterProvider.Shutdown(context.Background())
 		if err != nil {

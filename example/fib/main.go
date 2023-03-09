@@ -26,7 +26,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 // newExporter returns a console exporter.
@@ -46,8 +46,8 @@ func newResource() *resource.Resource {
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceNameKey.String("fib"),
-			semconv.ServiceVersionKey.String("v0.1.0"),
+			semconv.ServiceName("fib"),
+			semconv.ServiceVersion("v0.1.0"),
 			attribute.String("environment", "demo"),
 		),
 	)

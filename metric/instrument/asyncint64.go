@@ -18,25 +18,53 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric/unit"
 )
 
-// Int64Observer is a recorder of int64 measurement values.
+// Int64Observable describes a set of instruments used asynchronously to record
+// int64 measurements once per collection cycle. Observations of these
+// instruments are only made within a callback.
+//
+// Warning: methods may be added to this interface in minor releases.
+type Int64Observable interface {
+	Asynchronous
+
+	int64Observable()
+}
+
+// Int64ObservableCounter is an instrument used to asynchronously record
+// increasing int64 measurements once per collection cycle. Observations are
+// only made within a callback for this instrument. The value observed is
+// assumed the to be the cumulative sum of the count.
+//
+// Warning: methods may be added to this interface in minor releases.
+type Int64ObservableCounter interface{ Int64Observable }
+
+// Int64ObservableUpDownCounter is an instrument used to asynchronously record
+// int64 measurements once per collection cycle. Observations are only made
+// within a callback for this instrument. The value observed is assumed the to
+// be the cumulative sum of the count.
+//
+// Warning: methods may be added to this interface in minor releases.
+type Int64ObservableUpDownCounter interface{ Int64Observable }
+
+// Int64ObservableGauge is an instrument used to asynchronously record
+// instantaneous int64 measurements once per collection cycle. Observations are
+// only made within a callback for this instrument.
+//
+// Warning: methods may be added to this interface in minor releases.
+type Int64ObservableGauge interface{ Int64Observable }
+
+// Int64Observer is a recorder of int64 measurements.
 //
 // Warning: methods may be added to this interface in minor releases.
 type Int64Observer interface {
-	Asynchronous
-
-	// Observe records the measurement value for a set of attributes.
-	//
-	// It is only valid to call this within a callback. If called outside of
-	// the registered callback it should have no effect on the instrument, and
-	// an error will be reported via the error handler.
-	Observe(ctx context.Context, value int64, attributes ...attribute.KeyValue)
+	Observe(value int64, attributes ...attribute.KeyValue)
 }
 
 // Int64Callback is a function registered with a Meter that makes
-// observations for an Int64Observer it is registered with.
+// observations for a Int64Observerable instrument it is registered with.
+// Calls to the Int64Observer record measurement values for the
+// Int64Observable.
 //
 // The function needs to complete in a finite amount of time and the deadline
 // of the passed context is expected to be honored.
@@ -53,7 +81,7 @@ type Int64Callback func(context.Context, Int64Observer) error
 // observe int64 values.
 type Int64ObserverConfig struct {
 	description string
-	unit        unit.Unit
+	unit        string
 	callbacks   []Int64Callback
 }
 
@@ -73,7 +101,7 @@ func (c Int64ObserverConfig) Description() string {
 }
 
 // Unit returns the Config unit.
-func (c Int64ObserverConfig) Unit() unit.Unit {
+func (c Int64ObserverConfig) Unit() string {
 	return c.unit
 }
 

@@ -24,7 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/bridge/opentracing/migration"
 	"go.opentelemetry.io/otel/codes"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -48,6 +48,7 @@ type MockTracer struct {
 	SpareTraceIDs         []trace.TraceID
 	SpareSpanIDs          []trace.SpanID
 	SpareContextKeyValues []MockContextKeyValue
+	TraceFlags            trace.TraceFlags
 
 	randLock sync.Mutex
 	rand     *rand.Rand
@@ -76,7 +77,7 @@ func (t *MockTracer) Start(ctx context.Context, name string, opts ...trace.SpanS
 	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID:    t.getTraceID(ctx, &config),
 		SpanID:     t.getSpanID(),
-		TraceFlags: 0,
+		TraceFlags: t.TraceFlags,
 	})
 	span := &MockSpan{
 		mockTracer:     t,
@@ -267,8 +268,8 @@ func (s *MockSpan) RecordError(err error, opts ...trace.EventOption) {
 
 	s.SetStatus(codes.Error, "")
 	opts = append(opts, trace.WithAttributes(
-		semconv.ExceptionTypeKey.String(reflect.TypeOf(err).String()),
-		semconv.ExceptionMessageKey.String(err.Error()),
+		semconv.ExceptionType(reflect.TypeOf(err).String()),
+		semconv.ExceptionMessage(err.Error()),
 	))
 	s.AddEvent(semconv.ExceptionEventName, opts...)
 }

@@ -16,19 +16,20 @@ package metric
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/instrument"
-	"go.opentelemetry.io/otel/metric/instrument/asyncfloat64"
-	"go.opentelemetry.io/otel/metric/instrument/asyncint64"
-	"go.opentelemetry.io/otel/metric/instrument/syncfloat64"
-	"go.opentelemetry.io/otel/metric/instrument/syncint64"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/metric/aggregation"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -95,7 +96,7 @@ func TestMeterInstrumentConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
-var emptyCallback metric.Callback = func(ctx context.Context) error { return nil }
+var emptyCallback metric.Callback = func(context.Context, metric.Observer) error { return nil }
 
 // A Meter Should be able register Callbacks Concurrently.
 func TestMeterCallbackCreationConcurrency(t *testing.T) {
@@ -105,11 +106,11 @@ func TestMeterCallbackCreationConcurrency(t *testing.T) {
 	m := NewMeterProvider().Meter("callback-concurrency")
 
 	go func() {
-		_, _ = m.RegisterCallback([]instrument.Asynchronous{}, emptyCallback)
+		_, _ = m.RegisterCallback(emptyCallback)
 		wg.Done()
 	}()
 	go func() {
-		_, _ = m.RegisterCallback([]instrument.Asynchronous{}, emptyCallback)
+		_, _ = m.RegisterCallback(emptyCallback)
 		wg.Done()
 	}()
 	wg.Wait()
@@ -117,7 +118,7 @@ func TestMeterCallbackCreationConcurrency(t *testing.T) {
 
 func TestNoopCallbackUnregisterConcurrency(t *testing.T) {
 	m := NewMeterProvider().Meter("noop-unregister-concurrency")
-	reg, err := m.RegisterCallback(nil, emptyCallback)
+	reg, err := m.RegisterCallback(emptyCallback)
 	require.NoError(t, err)
 
 	wg := &sync.WaitGroup{}
@@ -144,12 +145,10 @@ func TestCallbackUnregisterConcurrency(t *testing.T) {
 	ag, err := meter.Int64ObservableGauge("gauge")
 	require.NoError(t, err)
 
-	i := []instrument.Asynchronous{actr}
-	regCtr, err := meter.RegisterCallback(i, emptyCallback)
+	regCtr, err := meter.RegisterCallback(emptyCallback, actr)
 	require.NoError(t, err)
 
-	i = []instrument.Asynchronous{ag}
-	regG, err := meter.RegisterCallback(i, emptyCallback)
+	regG, err := meter.RegisterCallback(emptyCallback, ag)
 	require.NoError(t, err)
 
 	wg := &sync.WaitGroup{}
@@ -169,8 +168,8 @@ func TestCallbackUnregisterConcurrency(t *testing.T) {
 
 // Instruments should produce correct ResourceMetrics.
 func TestMeterCreatesInstruments(t *testing.T) {
+	extrema := metricdata.NewExtrema(7.)
 	attrs := []attribute.KeyValue{attribute.String("name", "alice")}
-	seven := 7.0
 	testCases := []struct {
 		name string
 		fn   func(*testing.T, metric.Meter)
@@ -179,20 +178,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableInt64Count",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Int64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Int64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				ctr, err := m.Int64ObservableCounter("aint", instrument.WithInt64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 3)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(ctr, 3)
 					return nil
-				})
+				}, ctr)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				ctr.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "aint",
@@ -209,20 +205,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableInt64UpDownCount",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Int64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Int64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				ctr, err := m.Int64ObservableUpDownCounter("aint", instrument.WithInt64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 11)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(ctr, 11)
 					return nil
-				})
+				}, ctr)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				ctr.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "aint",
@@ -239,20 +232,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableInt64Gauge",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Int64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Int64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				gauge, err := m.Int64ObservableGauge("agauge", instrument.WithInt64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{gauge}, func(ctx context.Context) error {
-					gauge.Observe(ctx, 11)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(gauge, 11)
 					return nil
-				})
+				}, gauge)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				gauge.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "agauge",
@@ -267,20 +257,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableFloat64Count",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Float64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Float64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				ctr, err := m.Float64ObservableCounter("afloat", instrument.WithFloat64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 3)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(ctr, 3)
 					return nil
-				})
+				}, ctr)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				ctr.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "afloat",
@@ -297,20 +284,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableFloat64UpDownCount",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Float64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Float64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				ctr, err := m.Float64ObservableUpDownCounter("afloat", instrument.WithFloat64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 11)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(ctr, 11)
 					return nil
-				})
+				}, ctr)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				ctr.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "afloat",
@@ -327,20 +311,17 @@ func TestMeterCreatesInstruments(t *testing.T) {
 		{
 			name: "ObservableFloat64Gauge",
 			fn: func(t *testing.T, m metric.Meter) {
-				cback := func(ctx context.Context, o instrument.Float64Observer) error {
-					o.Observe(ctx, 4, attrs...)
+				cback := func(_ context.Context, o instrument.Float64Observer) error {
+					o.Observe(4, attrs...)
 					return nil
 				}
 				gauge, err := m.Float64ObservableGauge("agauge", instrument.WithFloat64Callback(cback))
 				assert.NoError(t, err)
-				_, err = m.RegisterCallback([]instrument.Asynchronous{gauge}, func(ctx context.Context) error {
-					gauge.Observe(ctx, 11)
+				_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(gauge, 11)
 					return nil
-				})
+				}, gauge)
 				assert.NoError(t, err)
-
-				// Observed outside of a callback, it should be ignored.
-				gauge.Observe(context.Background(), 19)
 			},
 			want: metricdata.Metrics{
 				Name: "agauge",
@@ -409,8 +390,8 @@ func TestMeterCreatesInstruments(t *testing.T) {
 							Count:        1,
 							Bounds:       []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
 							BucketCounts: []uint64{0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-							Min:          &seven,
-							Max:          &seven,
+							Min:          extrema,
+							Max:          extrema,
 							Sum:          7.0,
 						},
 					},
@@ -473,8 +454,8 @@ func TestMeterCreatesInstruments(t *testing.T) {
 							Count:        1,
 							Bounds:       []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
 							BucketCounts: []uint64{0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-							Min:          &seven,
-							Max:          &seven,
+							Min:          extrema,
+							Max:          extrema,
 							Sum:          7.0,
 						},
 					},
@@ -490,7 +471,8 @@ func TestMeterCreatesInstruments(t *testing.T) {
 
 			tt.fn(t, m)
 
-			rm, err := rdr.Collect(context.Background())
+			rm := metricdata.ResourceMetrics{}
+			err := rdr.Collect(context.Background(), &rm)
 			assert.NoError(t, err)
 
 			require.Len(t, rm.ScopeMetrics, 1)
@@ -502,6 +484,229 @@ func TestMeterCreatesInstruments(t *testing.T) {
 	}
 }
 
+func TestRegisterNonSDKObserverErrors(t *testing.T) {
+	rdr := NewManualReader()
+	mp := NewMeterProvider(WithReader(rdr))
+	meter := mp.Meter("scope")
+
+	type obsrv struct{ instrument.Asynchronous }
+	o := obsrv{}
+
+	_, err := meter.RegisterCallback(
+		func(context.Context, metric.Observer) error { return nil },
+		o,
+	)
+	assert.ErrorContains(
+		t,
+		err,
+		"invalid observable: from different implementation",
+		"External instrument registred",
+	)
+}
+
+func TestMeterMixingOnRegisterErrors(t *testing.T) {
+	rdr := NewManualReader()
+	mp := NewMeterProvider(WithReader(rdr))
+
+	m1 := mp.Meter("scope1")
+	m2 := mp.Meter("scope2")
+	iCtr, err := m2.Int64ObservableCounter("int64 ctr")
+	require.NoError(t, err)
+	fCtr, err := m2.Float64ObservableCounter("float64 ctr")
+	require.NoError(t, err)
+	_, err = m1.RegisterCallback(
+		func(context.Context, metric.Observer) error { return nil },
+		iCtr, fCtr,
+	)
+	assert.ErrorContains(
+		t,
+		err,
+		`invalid registration: observable "int64 ctr" from Meter "scope2", registered with Meter "scope1"`,
+		"Instrument registred with non-creation Meter",
+	)
+	assert.ErrorContains(
+		t,
+		err,
+		`invalid registration: observable "float64 ctr" from Meter "scope2", registered with Meter "scope1"`,
+		"Instrument registred with non-creation Meter",
+	)
+}
+
+func TestCallbackObserverNonRegistered(t *testing.T) {
+	rdr := NewManualReader()
+	mp := NewMeterProvider(WithReader(rdr))
+
+	m1 := mp.Meter("scope1")
+	valid, err := m1.Int64ObservableCounter("ctr")
+	require.NoError(t, err)
+
+	m2 := mp.Meter("scope2")
+	iCtr, err := m2.Int64ObservableCounter("int64 ctr")
+	require.NoError(t, err)
+	fCtr, err := m2.Float64ObservableCounter("float64 ctr")
+	require.NoError(t, err)
+
+	type int64Obsrv struct{ instrument.Int64Observable }
+	int64Foreign := int64Obsrv{}
+	type float64Obsrv struct{ instrument.Float64Observable }
+	float64Foreign := float64Obsrv{}
+
+	_, err = m1.RegisterCallback(
+		func(_ context.Context, o metric.Observer) error {
+			o.ObserveInt64(valid, 1)
+			o.ObserveInt64(iCtr, 1)
+			o.ObserveFloat64(fCtr, 1)
+			o.ObserveInt64(int64Foreign, 1)
+			o.ObserveFloat64(float64Foreign, 1)
+			return nil
+		},
+		valid,
+	)
+	require.NoError(t, err)
+
+	var got metricdata.ResourceMetrics
+	assert.NotPanics(t, func() {
+		err = rdr.Collect(context.Background(), &got)
+	})
+
+	assert.NoError(t, err)
+	want := metricdata.ResourceMetrics{
+		Resource: resource.Default(),
+		ScopeMetrics: []metricdata.ScopeMetrics{
+			{
+				Scope: instrumentation.Scope{
+					Name: "scope1",
+				},
+				Metrics: []metricdata.Metrics{
+					{
+						Name: "ctr",
+						Data: metricdata.Sum[int64]{
+							Temporality: metricdata.CumulativeTemporality,
+							IsMonotonic: true,
+							DataPoints: []metricdata.DataPoint[int64]{
+								{
+									Value: 1,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	metricdatatest.AssertEqual(t, want, got, metricdatatest.IgnoreTimestamp())
+}
+
+type logSink struct {
+	logr.LogSink
+
+	messages []string
+}
+
+func newLogSink(t *testing.T) *logSink {
+	return &logSink{LogSink: testr.New(t).GetSink()}
+}
+
+func (l *logSink) Info(level int, msg string, keysAndValues ...interface{}) {
+	l.messages = append(l.messages, msg)
+	l.LogSink.Info(level, msg, keysAndValues...)
+}
+
+func (l *logSink) Error(err error, msg string, keysAndValues ...interface{}) {
+	l.messages = append(l.messages, fmt.Sprintf("%s: %s", err, msg))
+	l.LogSink.Error(err, msg, keysAndValues...)
+}
+
+func (l *logSink) String() string {
+	out := make([]string, len(l.messages))
+	for i := range l.messages {
+		out[i] = "\t-" + l.messages[i]
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestGlobalInstRegisterCallback(t *testing.T) {
+	l := newLogSink(t)
+	otel.SetLogger(logr.New(l))
+
+	const mtrName = "TestGlobalInstRegisterCallback"
+	preMtr := otel.Meter(mtrName)
+	preInt64Ctr, err := preMtr.Int64ObservableCounter("pre.int64.counter")
+	require.NoError(t, err)
+	preFloat64Ctr, err := preMtr.Float64ObservableCounter("pre.float64.counter")
+	require.NoError(t, err)
+
+	rdr := NewManualReader()
+	mp := NewMeterProvider(WithReader(rdr), WithResource(resource.Empty()))
+	otel.SetMeterProvider(mp)
+
+	postMtr := otel.Meter(mtrName)
+	postInt64Ctr, err := postMtr.Int64ObservableCounter("post.int64.counter")
+	require.NoError(t, err)
+	postFloat64Ctr, err := postMtr.Float64ObservableCounter("post.float64.counter")
+	require.NoError(t, err)
+
+	cb := func(_ context.Context, o metric.Observer) error {
+		o.ObserveInt64(preInt64Ctr, 1)
+		o.ObserveFloat64(preFloat64Ctr, 2)
+		o.ObserveInt64(postInt64Ctr, 3)
+		o.ObserveFloat64(postFloat64Ctr, 4)
+		return nil
+	}
+
+	_, err = preMtr.RegisterCallback(cb, preInt64Ctr, preFloat64Ctr, postInt64Ctr, postFloat64Ctr)
+	assert.NoError(t, err)
+
+	_, err = preMtr.RegisterCallback(cb, preInt64Ctr, preFloat64Ctr, postInt64Ctr, postFloat64Ctr)
+	assert.NoError(t, err)
+
+	got := metricdata.ResourceMetrics{}
+	err = rdr.Collect(context.Background(), &got)
+	assert.NoError(t, err)
+	assert.Lenf(t, l.messages, 0, "Warnings and errors logged:\n%s", l)
+	metricdatatest.AssertEqual(t, metricdata.ResourceMetrics{
+		ScopeMetrics: []metricdata.ScopeMetrics{
+			{
+				Scope: instrumentation.Scope{Name: "TestGlobalInstRegisterCallback"},
+				Metrics: []metricdata.Metrics{
+					{
+						Name: "pre.int64.counter",
+						Data: metricdata.Sum[int64]{
+							Temporality: metricdata.CumulativeTemporality,
+							IsMonotonic: true,
+							DataPoints:  []metricdata.DataPoint[int64]{{Value: 1}},
+						},
+					},
+					{
+						Name: "pre.float64.counter",
+						Data: metricdata.Sum[float64]{
+							DataPoints:  []metricdata.DataPoint[float64]{{Value: 2}},
+							Temporality: metricdata.CumulativeTemporality,
+							IsMonotonic: true,
+						},
+					},
+					{
+						Name: "post.int64.counter",
+						Data: metricdata.Sum[int64]{
+							Temporality: metricdata.CumulativeTemporality,
+							IsMonotonic: true,
+							DataPoints:  []metricdata.DataPoint[int64]{{Value: 3}},
+						},
+					},
+					{
+						Name: "post.float64.counter",
+						Data: metricdata.Sum[float64]{
+							DataPoints:  []metricdata.DataPoint[float64]{{Value: 4}},
+							Temporality: metricdata.CumulativeTemporality,
+							IsMonotonic: true,
+						},
+					},
+				},
+			},
+		},
+	}, got, metricdatatest.IgnoreTimestamp())
+}
+
 func TestMetersProvideScope(t *testing.T) {
 	rdr := NewManualReader()
 	mp := NewMeterProvider(WithReader(rdr))
@@ -509,19 +714,19 @@ func TestMetersProvideScope(t *testing.T) {
 	m1 := mp.Meter("scope1")
 	ctr1, err := m1.Float64ObservableCounter("ctr1")
 	assert.NoError(t, err)
-	_, err = m1.RegisterCallback([]instrument.Asynchronous{ctr1}, func(ctx context.Context) error {
-		ctr1.Observe(ctx, 5)
+	_, err = m1.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		o.ObserveFloat64(ctr1, 5)
 		return nil
-	})
+	}, ctr1)
 	assert.NoError(t, err)
 
 	m2 := mp.Meter("scope2")
 	ctr2, err := m2.Int64ObservableCounter("ctr2")
 	assert.NoError(t, err)
-	_, err = m1.RegisterCallback([]instrument.Asynchronous{ctr2}, func(ctx context.Context) error {
-		ctr2.Observe(ctx, 7)
+	_, err = m2.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		o.ObserveInt64(ctr2, 7)
 		return nil
-	})
+	}, ctr2)
 	assert.NoError(t, err)
 
 	want := metricdata.ResourceMetrics{
@@ -568,7 +773,8 @@ func TestMetersProvideScope(t *testing.T) {
 		},
 	}
 
-	got, err := rdr.Collect(context.Background())
+	got := metricdata.ResourceMetrics{}
+	err = rdr.Collect(context.Background(), &got)
 	assert.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, metricdatatest.IgnoreTimestamp())
 }
@@ -597,28 +803,29 @@ func TestUnregisterUnregisters(t *testing.T) {
 	require.NoError(t, err)
 
 	var called bool
-	reg, err := m.RegisterCallback([]instrument.Asynchronous{
+	reg, err := m.RegisterCallback(
+		func(context.Context, metric.Observer) error {
+			called = true
+			return nil
+		},
 		int64Counter,
 		int64UpDownCounter,
 		int64Gauge,
 		floag64Counter,
 		floag64UpDownCounter,
 		floag64Gauge,
-	}, func(context.Context) error {
-		called = true
-		return nil
-	})
+	)
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = r.Collect(ctx)
+	err = r.Collect(ctx, &metricdata.ResourceMetrics{})
 	require.NoError(t, err)
 	assert.True(t, called, "callback not called for registered callback")
 
 	called = false
 	require.NoError(t, reg.Unregister(), "unregister")
 
-	_, err = r.Collect(ctx)
+	err = r.Collect(ctx, &metricdata.ResourceMetrics{})
 	require.NoError(t, err)
 	assert.False(t, called, "callback called for unregistered callback")
 }
@@ -650,20 +857,22 @@ func TestRegisterCallbackDropAggregations(t *testing.T) {
 	require.NoError(t, err)
 
 	var called bool
-	_, err = m.RegisterCallback([]instrument.Asynchronous{
+	_, err = m.RegisterCallback(
+		func(context.Context, metric.Observer) error {
+			called = true
+			return nil
+		},
 		int64Counter,
 		int64UpDownCounter,
 		int64Gauge,
 		floag64Counter,
 		floag64UpDownCounter,
 		floag64Gauge,
-	}, func(context.Context) error {
-		called = true
-		return nil
-	})
+	)
 	require.NoError(t, err)
 
-	data, err := r.Collect(context.Background())
+	data := metricdata.ResourceMetrics{}
+	err = r.Collect(context.Background(), &data)
 	require.NoError(t, err)
 
 	assert.False(t, called, "callback called for all drop instruments")
@@ -671,8 +880,11 @@ func TestRegisterCallbackDropAggregations(t *testing.T) {
 }
 
 func TestAttributeFilter(t *testing.T) {
-	one := 1.0
-	two := 2.0
+	t.Run("Delta", testAttributeFilter(metricdata.DeltaTemporality))
+	t.Run("Cumulative", testAttributeFilter(metricdata.CumulativeTemporality))
+}
+
+func testAttributeFilter(temporality metricdata.Temporality) func(*testing.T) {
 	testcases := []struct {
 		name       string
 		register   func(t *testing.T, mtr metric.Meter) error
@@ -685,11 +897,12 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 2.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(ctr, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveFloat64(ctr, 2.0, attribute.String("foo", "bar"))
+					o.ObserveFloat64(ctr, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -698,10 +911,10 @@ func TestAttributeFilter(t *testing.T) {
 					DataPoints: []metricdata.DataPoint[float64]{
 						{
 							Attributes: attribute.NewSet(attribute.String("foo", "bar")),
-							Value:      2.0, // TODO (#3439): This should be 3.0.
+							Value:      4.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: true,
 				},
 			},
@@ -713,11 +926,12 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 2.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(ctr, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveFloat64(ctr, 2.0, attribute.String("foo", "bar"))
+					o.ObserveFloat64(ctr, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -726,10 +940,10 @@ func TestAttributeFilter(t *testing.T) {
 					DataPoints: []metricdata.DataPoint[float64]{
 						{
 							Attributes: attribute.NewSet(attribute.String("foo", "bar")),
-							Value:      2.0, // TODO (#3439): This should be 3.0.
+							Value:      4.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: false,
 				},
 			},
@@ -741,11 +955,11 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 2.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveFloat64(ctr, 1.0, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveFloat64(ctr, 2.0, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -767,11 +981,12 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 20, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(ctr, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveInt64(ctr, 20, attribute.String("foo", "bar"))
+					o.ObserveInt64(ctr, 10, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -780,10 +995,10 @@ func TestAttributeFilter(t *testing.T) {
 					DataPoints: []metricdata.DataPoint[int64]{
 						{
 							Attributes: attribute.NewSet(attribute.String("foo", "bar")),
-							Value:      20, // TODO (#3439): This should be 30.
+							Value:      40,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: true,
 				},
 			},
@@ -795,11 +1010,12 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 20, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(ctr, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveInt64(ctr, 20, attribute.String("foo", "bar"))
+					o.ObserveInt64(ctr, 10, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -808,10 +1024,10 @@ func TestAttributeFilter(t *testing.T) {
 					DataPoints: []metricdata.DataPoint[int64]{
 						{
 							Attributes: attribute.NewSet(attribute.String("foo", "bar")),
-							Value:      20, // TODO (#3439): This should be 30.
+							Value:      40,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: false,
 				},
 			},
@@ -823,11 +1039,11 @@ func TestAttributeFilter(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				_, err = mtr.RegisterCallback([]instrument.Asynchronous{ctr}, func(ctx context.Context) error {
-					ctr.Observe(ctx, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
-					ctr.Observe(ctx, 20, attribute.String("foo", "bar"), attribute.Int("version", 2))
+				_, err = mtr.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+					o.ObserveInt64(ctr, 10, attribute.String("foo", "bar"), attribute.Int("version", 1))
+					o.ObserveInt64(ctr, 20, attribute.String("foo", "bar"), attribute.Int("version", 2))
 					return nil
-				})
+				}, ctr)
 				return err
 			},
 			wantMetric: metricdata.Metrics{
@@ -863,7 +1079,7 @@ func TestAttributeFilter(t *testing.T) {
 							Value:      3.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: true,
 				},
 			},
@@ -889,7 +1105,7 @@ func TestAttributeFilter(t *testing.T) {
 							Value:      3.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: false,
 				},
 			},
@@ -915,12 +1131,12 @@ func TestAttributeFilter(t *testing.T) {
 							Bounds:       []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
 							BucketCounts: []uint64{0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 							Count:        2,
-							Min:          &one,
-							Max:          &two,
+							Min:          metricdata.NewExtrema(1.),
+							Max:          metricdata.NewExtrema(2.),
 							Sum:          3.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 				},
 			},
 		},
@@ -945,7 +1161,7 @@ func TestAttributeFilter(t *testing.T) {
 							Value:      30,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: true,
 				},
 			},
@@ -971,7 +1187,7 @@ func TestAttributeFilter(t *testing.T) {
 							Value:      30,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 					IsMonotonic: false,
 				},
 			},
@@ -997,58 +1213,305 @@ func TestAttributeFilter(t *testing.T) {
 							Bounds:       []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
 							BucketCounts: []uint64{0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 							Count:        2,
-							Min:          &one,
-							Max:          &two,
+							Min:          metricdata.NewExtrema(1.),
+							Max:          metricdata.NewExtrema(2.),
 							Sum:          3.0,
 						},
 					},
-					Temporality: metricdata.CumulativeTemporality,
+					Temporality: temporality,
 				},
 			},
 		},
 	}
 
-	for _, tt := range testcases {
-		t.Run(tt.name, func(t *testing.T) {
-			rdr := NewManualReader()
-			mtr := NewMeterProvider(
-				WithReader(rdr),
-				WithView(NewView(
-					Instrument{Name: "*"},
-					Stream{AttributeFilter: func(kv attribute.KeyValue) bool {
-						return kv.Key == attribute.Key("foo")
-					}},
-				)),
-			).Meter("TestAttributeFilter")
-			require.NoError(t, tt.register(t, mtr))
+	return func(t *testing.T) {
+		for _, tt := range testcases {
+			t.Run(tt.name, func(t *testing.T) {
+				rdr := NewManualReader(WithTemporalitySelector(func(InstrumentKind) metricdata.Temporality {
+					return temporality
+				}))
+				mtr := NewMeterProvider(
+					WithReader(rdr),
+					WithView(NewView(
+						Instrument{Name: "*"},
+						Stream{AttributeFilter: func(kv attribute.KeyValue) bool {
+							return kv.Key == attribute.Key("foo")
+						}},
+					)),
+				).Meter("TestAttributeFilter")
+				require.NoError(t, tt.register(t, mtr))
 
-			m, err := rdr.Collect(context.Background())
-			assert.NoError(t, err)
+				m := metricdata.ResourceMetrics{}
+				err := rdr.Collect(context.Background(), &m)
+				assert.NoError(t, err)
 
-			require.Len(t, m.ScopeMetrics, 1)
-			require.Len(t, m.ScopeMetrics[0].Metrics, 1)
+				require.Len(t, m.ScopeMetrics, 1)
+				require.Len(t, m.ScopeMetrics[0].Metrics, 1)
 
-			metricdatatest.AssertEqual(t, tt.wantMetric, m.ScopeMetrics[0].Metrics[0], metricdatatest.IgnoreTimestamp())
-		})
+				metricdatatest.AssertEqual(t, tt.wantMetric, m.ScopeMetrics[0].Metrics[0], metricdatatest.IgnoreTimestamp())
+			})
+		}
 	}
 }
 
+func TestAsynchronousExample(t *testing.T) {
+	// This example can be found:
+	// https://github.com/open-telemetry/opentelemetry-specification/blob/8b91585e6175dd52b51e1d60bea105041225e35d/specification/metrics/supplementary-guidelines.md#asynchronous-example
+	var (
+		threadID1 = attribute.Int("tid", 1)
+		threadID2 = attribute.Int("tid", 2)
+		threadID3 = attribute.Int("tid", 3)
+
+		processID1001 = attribute.String("pid", "1001")
+
+		thread1 = attribute.NewSet(processID1001, threadID1)
+		thread2 = attribute.NewSet(processID1001, threadID2)
+		thread3 = attribute.NewSet(processID1001, threadID3)
+
+		process1001 = attribute.NewSet(processID1001)
+	)
+
+	setup := func(t *testing.T, temp metricdata.Temporality) (map[attribute.Set]int64, func(*testing.T), *metricdata.ScopeMetrics, *int64, *int64, *int64) {
+		t.Helper()
+
+		const (
+			instName       = "pageFaults"
+			filteredStream = "filteredPageFaults"
+			scopeName      = "AsynchronousExample"
+		)
+
+		selector := func(InstrumentKind) metricdata.Temporality { return temp }
+		reader := NewManualReader(WithTemporalitySelector(selector))
+
+		noopFilter := func(kv attribute.KeyValue) bool { return true }
+		noFiltered := NewView(Instrument{Name: instName}, Stream{Name: instName, AttributeFilter: noopFilter})
+
+		filter := func(kv attribute.KeyValue) bool { return kv.Key != "tid" }
+		filtered := NewView(Instrument{Name: instName}, Stream{Name: filteredStream, AttributeFilter: filter})
+
+		mp := NewMeterProvider(WithReader(reader), WithView(noFiltered, filtered))
+		meter := mp.Meter(scopeName)
+
+		observations := make(map[attribute.Set]int64)
+		_, err := meter.Int64ObservableCounter(instName, instrument.WithInt64Callback(
+			func(_ context.Context, o instrument.Int64Observer) error {
+				for attrSet, val := range observations {
+					o.Observe(val, attrSet.ToSlice()...)
+				}
+				return nil
+			},
+		))
+		require.NoError(t, err)
+
+		want := &metricdata.ScopeMetrics{
+			Scope: instrumentation.Scope{Name: scopeName},
+			Metrics: []metricdata.Metrics{
+				{
+					Name: filteredStream,
+					Data: metricdata.Sum[int64]{
+						Temporality: temp,
+						IsMonotonic: true,
+						DataPoints: []metricdata.DataPoint[int64]{
+							{Attributes: process1001},
+						},
+					},
+				},
+				{
+					Name: instName,
+					Data: metricdata.Sum[int64]{
+						Temporality: temp,
+						IsMonotonic: true,
+						DataPoints: []metricdata.DataPoint[int64]{
+							{Attributes: thread1},
+							{Attributes: thread2},
+						},
+					},
+				},
+			},
+		}
+		wantFiltered := &want.Metrics[0].Data.(metricdata.Sum[int64]).DataPoints[0].Value
+		wantThread1 := &want.Metrics[1].Data.(metricdata.Sum[int64]).DataPoints[0].Value
+		wantThread2 := &want.Metrics[1].Data.(metricdata.Sum[int64]).DataPoints[1].Value
+
+		collect := func(t *testing.T) {
+			t.Helper()
+			got := metricdata.ResourceMetrics{}
+			err := reader.Collect(context.Background(), &got)
+			require.NoError(t, err)
+			require.Len(t, got.ScopeMetrics, 1)
+			metricdatatest.AssertEqual(t, *want, got.ScopeMetrics[0], metricdatatest.IgnoreTimestamp())
+		}
+
+		return observations, collect, want, wantFiltered, wantThread1, wantThread2
+	}
+
+	t.Run("Cumulative", func(t *testing.T) {
+		temporality := metricdata.CumulativeTemporality
+		observations, verify, want, wantFiltered, wantThread1, wantThread2 := setup(t, temporality)
+
+		// During the time range (T0, T1]:
+		//     pid = 1001, tid = 1, #PF = 50
+		//     pid = 1001, tid = 2, #PF = 30
+		observations[thread1] = 50
+		observations[thread2] = 30
+
+		*wantFiltered = 80
+		*wantThread1 = 50
+		*wantThread2 = 30
+
+		verify(t)
+
+		// During the time range (T1, T2]:
+		//     pid = 1001, tid = 1, #PF = 53
+		//     pid = 1001, tid = 2, #PF = 38
+		observations[thread1] = 53
+		observations[thread2] = 38
+
+		*wantFiltered = 91
+		*wantThread1 = 53
+		*wantThread2 = 38
+
+		verify(t)
+
+		// During the time range (T2, T3]
+		//     pid = 1001, tid = 1, #PF = 56
+		//     pid = 1001, tid = 2, #PF = 42
+		observations[thread1] = 56
+		observations[thread2] = 42
+
+		*wantFiltered = 98
+		*wantThread1 = 56
+		*wantThread2 = 42
+
+		verify(t)
+
+		// During the time range (T3, T4]:
+		//     pid = 1001, tid = 1, #PF = 60
+		//     pid = 1001, tid = 2, #PF = 47
+		observations[thread1] = 60
+		observations[thread2] = 47
+
+		*wantFiltered = 107
+		*wantThread1 = 60
+		*wantThread2 = 47
+
+		verify(t)
+
+		// During the time range (T4, T5]:
+		//     thread 1 died, thread 3 started
+		//     pid = 1001, tid = 2, #PF = 53
+		//     pid = 1001, tid = 3, #PF = 5
+		delete(observations, thread1)
+		observations[thread2] = 53
+		observations[thread3] = 5
+
+		*wantFiltered = 58
+		want.Metrics[1].Data = metricdata.Sum[int64]{
+			Temporality: temporality,
+			IsMonotonic: true,
+			DataPoints: []metricdata.DataPoint[int64]{
+				// Thread 1 remains at last measured value.
+				{Attributes: thread1, Value: 60},
+				{Attributes: thread2, Value: 53},
+				{Attributes: thread3, Value: 5},
+			},
+		}
+
+		verify(t)
+	})
+
+	t.Run("Delta", func(t *testing.T) {
+		temporality := metricdata.DeltaTemporality
+		observations, verify, want, wantFiltered, wantThread1, wantThread2 := setup(t, temporality)
+
+		// During the time range (T0, T1]:
+		//     pid = 1001, tid = 1, #PF = 50
+		//     pid = 1001, tid = 2, #PF = 30
+		observations[thread1] = 50
+		observations[thread2] = 30
+
+		*wantFiltered = 80
+		*wantThread1 = 50
+		*wantThread2 = 30
+
+		verify(t)
+
+		// During the time range (T1, T2]:
+		//     pid = 1001, tid = 1, #PF = 53
+		//     pid = 1001, tid = 2, #PF = 38
+		observations[thread1] = 53
+		observations[thread2] = 38
+
+		*wantFiltered = 11
+		*wantThread1 = 3
+		*wantThread2 = 8
+
+		verify(t)
+
+		// During the time range (T2, T3]
+		//     pid = 1001, tid = 1, #PF = 56
+		//     pid = 1001, tid = 2, #PF = 42
+		observations[thread1] = 56
+		observations[thread2] = 42
+
+		*wantFiltered = 7
+		*wantThread1 = 3
+		*wantThread2 = 4
+
+		verify(t)
+
+		// During the time range (T3, T4]:
+		//     pid = 1001, tid = 1, #PF = 60
+		//     pid = 1001, tid = 2, #PF = 47
+		observations[thread1] = 60
+		observations[thread2] = 47
+
+		*wantFiltered = 9
+		*wantThread1 = 4
+		*wantThread2 = 5
+
+		verify(t)
+
+		// During the time range (T4, T5]:
+		//     thread 1 died, thread 3 started
+		//     pid = 1001, tid = 2, #PF = 53
+		//     pid = 1001, tid = 3, #PF = 5
+		delete(observations, thread1)
+		observations[thread2] = 53
+		observations[thread3] = 5
+
+		*wantFiltered = -49
+		want.Metrics[1].Data = metricdata.Sum[int64]{
+			Temporality: temporality,
+			IsMonotonic: true,
+			DataPoints: []metricdata.DataPoint[int64]{
+				// Thread 1 remains at last measured value.
+				{Attributes: thread1, Value: 0},
+				{Attributes: thread2, Value: 6},
+				{Attributes: thread3, Value: 5},
+			},
+		}
+
+		verify(t)
+	})
+}
+
 var (
-	aiCounter       asyncint64.Counter
-	aiUpDownCounter asyncint64.UpDownCounter
-	aiGauge         asyncint64.Gauge
+	aiCounter       instrument.Int64ObservableCounter
+	aiUpDownCounter instrument.Int64ObservableUpDownCounter
+	aiGauge         instrument.Int64ObservableGauge
 
-	afCounter       asyncfloat64.Counter
-	afUpDownCounter asyncfloat64.UpDownCounter
-	afGauge         asyncfloat64.Gauge
+	afCounter       instrument.Float64ObservableCounter
+	afUpDownCounter instrument.Float64ObservableUpDownCounter
+	afGauge         instrument.Float64ObservableGauge
 
-	siCounter       syncint64.Counter
-	siUpDownCounter syncint64.UpDownCounter
-	siHistogram     syncint64.Histogram
+	siCounter       instrument.Int64Counter
+	siUpDownCounter instrument.Int64UpDownCounter
+	siHistogram     instrument.Int64Histogram
 
-	sfCounter       syncfloat64.Counter
-	sfUpDownCounter syncfloat64.UpDownCounter
-	sfHistogram     syncfloat64.Histogram
+	sfCounter       instrument.Float64Counter
+	sfUpDownCounter instrument.Float64UpDownCounter
+	sfHistogram     instrument.Float64Histogram
 )
 
 func BenchmarkInstrumentCreation(b *testing.B) {

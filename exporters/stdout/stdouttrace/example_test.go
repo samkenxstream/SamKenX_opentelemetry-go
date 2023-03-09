@@ -23,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -59,8 +59,8 @@ func multiply(ctx context.Context, x, y int64) int64 {
 func Resource() *resource.Resource {
 	return resource.NewWithAttributes(
 		semconv.SchemaURL,
-		semconv.ServiceNameKey.String("stdout-example"),
-		semconv.ServiceVersionKey.String("0.0.1"),
+		semconv.ServiceName("stdout-example"),
+		semconv.ServiceVersion("0.0.1"),
 	)
 }
 

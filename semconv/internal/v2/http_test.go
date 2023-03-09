@@ -47,7 +47,7 @@ var hc = &HTTPConv{
 
 func TestHTTPClientResponse(t *testing.T) {
 	const stat, n = 201, 397
-	resp := http.Response{
+	resp := &http.Response{
 		StatusCode:    stat,
 		ContentLength: n,
 	}
@@ -57,6 +57,31 @@ func TestHTTPClientResponse(t *testing.T) {
 		attribute.Key("http.status_code").Int(stat),
 		attribute.Key("http.response_content_length").Int(n),
 	}, got)
+}
+
+func TestHTTPSClientRequest(t *testing.T) {
+	req := &http.Request{
+		Method: http.MethodGet,
+		URL: &url.URL{
+			Scheme: "https",
+			Host:   "127.0.0.1:443",
+			Path:   "/resource",
+		},
+		Proto:      "HTTP/1.0",
+		ProtoMajor: 1,
+		ProtoMinor: 0,
+	}
+
+	assert.Equal(
+		t,
+		[]attribute.KeyValue{
+			attribute.String("http.method", "GET"),
+			attribute.String("http.flavor", "1.0"),
+			attribute.String("http.url", "https://127.0.0.1:443/resource"),
+			attribute.String("net.peer.name", "127.0.0.1"),
+		},
+		hc.ClientRequest(req),
+	)
 }
 
 func TestHTTPClientRequest(t *testing.T) {
@@ -142,7 +167,6 @@ func TestHTTPServerRequest(t *testing.T) {
 	assert.ElementsMatch(t,
 		[]attribute.KeyValue{
 			attribute.String("http.method", "GET"),
-			attribute.String("http.target", "/"),
 			attribute.String("http.scheme", "http"),
 			attribute.String("http.flavor", "1.1"),
 			attribute.String("net.host.name", srvURL.Hostname()),
@@ -153,16 +177,36 @@ func TestHTTPServerRequest(t *testing.T) {
 			attribute.String("enduser.id", user),
 			attribute.String("http.client_ip", clientIP),
 		},
-		hc.ServerRequest(req))
+		hc.ServerRequest("", req))
+}
+
+func TestHTTPServerName(t *testing.T) {
+	req := new(http.Request)
+	var got []attribute.KeyValue
+	const (
+		host = "test.semconv.server"
+		port = 8080
+	)
+	portStr := strconv.Itoa(port)
+	server := host + ":" + portStr
+	assert.NotPanics(t, func() { got = hc.ServerRequest(server, req) })
+	assert.Contains(t, got, attribute.String("net.host.name", host))
+	assert.Contains(t, got, attribute.Int("net.host.port", port))
+
+	req = &http.Request{Host: "alt.host.name:" + portStr}
+	// The server parameter does not include a port, ServerRequest should use
+	// the port in the request Host field.
+	assert.NotPanics(t, func() { got = hc.ServerRequest(host, req) })
+	assert.Contains(t, got, attribute.String("net.host.name", host))
+	assert.Contains(t, got, attribute.Int("net.host.port", port))
 }
 
 func TestHTTPServerRequestFailsGracefully(t *testing.T) {
 	req := new(http.Request)
 	var got []attribute.KeyValue
-	assert.NotPanics(t, func() { got = hc.ServerRequest(req) })
+	assert.NotPanics(t, func() { got = hc.ServerRequest("", req) })
 	want := []attribute.KeyValue{
 		attribute.String("http.method", "GET"),
-		attribute.String("http.target", ""),
 		attribute.String("http.scheme", "http"),
 		attribute.String("http.flavor", ""),
 		attribute.String("net.host.name", ""),

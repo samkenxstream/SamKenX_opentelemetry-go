@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package httpconv provides OpenTelemetry semantic convetions for the net/http
-// package from the standard library.
+// Package httpconv provides OpenTelemetry HTTP semantic conventions for
+// tracing telemetry.
 package httpconv // import "go.opentelemetry.io/otel/semconv/v1.13.0/httpconv"
 
 import (
@@ -58,9 +58,10 @@ var (
 	}
 )
 
-// ClientResponse returns attributes for an HTTP response received by a client
-// from a server. It will return the following attributes if the related values
-// are defined in resp: "http.status.code", "http.response_content_length".
+// ClientResponse returns trace attributes for an HTTP response received by a
+// client from a server. It will return the following attributes if the related
+// values are defined in resp: "http.status.code",
+// "http.response_content_length".
 //
 // This does not add all OpenTelemetry required attributes for an HTTP event,
 // it assumes ClientRequest was used to create the span with a complete set of
@@ -68,12 +69,12 @@ var (
 // request contained in resp. For example:
 //
 //	append(ClientResponse(resp), ClientRequest(resp.Request)...)
-func ClientResponse(resp http.Response) []attribute.KeyValue {
+func ClientResponse(resp *http.Response) []attribute.KeyValue {
 	return hc.ClientResponse(resp)
 }
 
-// ClientRequest returns attributes for an HTTP request made by a client. The
-// following attributes are always returned: "http.url", "http.flavor",
+// ClientRequest returns trace attributes for an HTTP request made by a client.
+// The following attributes are always returned: "http.url", "http.flavor",
 // "http.method", "net.peer.name". The following attributes are returned if the
 // related values are defined in req: "net.peer.port", "http.user_agent",
 // "http.request_content_length", "enduser.id".
@@ -87,14 +88,30 @@ func ClientStatus(code int) (codes.Code, string) {
 	return hc.ClientStatus(code)
 }
 
-// ServerRequest returns attributes for an HTTP request received by a server.
+// ServerRequest returns trace attributes for an HTTP request received by a
+// server.
+//
+// The server must be the primary server name if it is known. For example this
+// would be the ServerName directive
+// (https://httpd.apache.org/docs/2.4/mod/core.html#servername) for an Apache
+// server, and the server_name directive
+// (http://nginx.org/en/docs/http/ngx_http_core_module.html#server_name) for an
+// nginx server. More generically, the primary server name would be the host
+// header value that matches the default virtual host of an HTTP server. It
+// should include the host identifier and if a port is used to route to the
+// server that port identifier should be included as an appropriate port
+// suffix.
+//
+// If the primary server name is not known, server should be an empty string.
+// The req Host will be used to determine the server instead.
+//
 // The following attributes are always returned: "http.method", "http.scheme",
 // "http.flavor", "http.target", "net.host.name". The following attributes are
 // returned if they related values are defined in req: "net.host.port",
 // "net.sock.peer.addr", "net.sock.peer.port", "http.user_agent", "enduser.id",
 // "http.client_ip".
-func ServerRequest(req *http.Request) []attribute.KeyValue {
-	return hc.ServerRequest(req)
+func ServerRequest(server string, req *http.Request) []attribute.KeyValue {
+	return hc.ServerRequest(server, req)
 }
 
 // ServerStatus returns a span status code and message for an HTTP status code

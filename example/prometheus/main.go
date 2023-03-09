@@ -28,15 +28,13 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
+	api "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/instrument"
 	"go.opentelemetry.io/otel/sdk/metric"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 func main() {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	ctx := context.Background()
 
 	// The exporter embeds a default OpenTelemetry Reader and
@@ -68,11 +66,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = meter.RegisterCallback([]instrument.Asynchronous{gauge}, func(ctx context.Context) error {
-		n := -10. + rand.Float64()*(90.) // [-10, 100)
-		gauge.Observe(ctx, n, attrs...)
+	_, err = meter.RegisterCallback(func(_ context.Context, o api.Observer) error {
+		n := -10. + rng.Float64()*(90.) // [-10, 100)
+		o.ObserveFloat64(gauge, n, attrs...)
 		return nil
-	})
+	}, gauge)
 	if err != nil {
 		log.Fatal(err)
 	}

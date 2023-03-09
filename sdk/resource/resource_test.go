@@ -31,7 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	ottest "go.opentelemetry.io/otel/internal/internaltest"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 var (
@@ -227,8 +227,8 @@ func TestDefault(t *testing.T) {
 		"default service.name should include executable name")
 
 	require.Contains(t, res.Attributes(), semconv.TelemetrySDKLanguageGo)
-	require.Contains(t, res.Attributes(), semconv.TelemetrySDKVersionKey.String(otel.Version()))
-	require.Contains(t, res.Attributes(), semconv.TelemetrySDKNameKey.String("opentelemetry"))
+	require.Contains(t, res.Attributes(), semconv.TelemetrySDKVersion(otel.Version()))
+	require.Contains(t, res.Attributes(), semconv.TelemetrySDKName("opentelemetry"))
 }
 
 func TestString(t *testing.T) {
@@ -450,6 +450,25 @@ func TestNew(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewWrapedError(t *testing.T) {
+	localErr := errors.New("local error")
+	_, err := resource.New(
+		context.Background(),
+		resource.WithDetectors(
+			resource.StringDetector("", "", func() (string, error) {
+				return "", localErr
+			}),
+			resource.StringDetector("", "", func() (string, error) {
+				return "", assert.AnError
+			}),
+		),
+	)
+
+	assert.ErrorIs(t, err, localErr)
+	assert.ErrorIs(t, err, assert.AnError)
+	assert.NotErrorIs(t, err, errors.New("false positive error"))
 }
 
 func TestWithOSType(t *testing.T) {

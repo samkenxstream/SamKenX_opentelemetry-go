@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric/unit"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -73,7 +72,10 @@ var (
 		Value:      -1.0,
 	}
 
-	max, min            = 99.0, 3.
+	minA       = metricdata.NewExtrema(-1.)
+	minB, maxB = metricdata.NewExtrema(3.), metricdata.NewExtrema(99.)
+	minC       = metricdata.NewExtrema(-1.)
+
 	histogramDataPointA = metricdata.HistogramDataPoint{
 		Attributes:   attrA,
 		StartTime:    startA,
@@ -81,6 +83,7 @@ var (
 		Count:        2,
 		Bounds:       []float64{0, 10},
 		BucketCounts: []uint64{1, 1},
+		Min:          minA,
 		Sum:          2,
 	}
 	histogramDataPointB = metricdata.HistogramDataPoint{
@@ -90,8 +93,8 @@ var (
 		Count:        3,
 		Bounds:       []float64{0, 10, 100},
 		BucketCounts: []uint64{1, 1, 1},
-		Max:          &max,
-		Min:          &min,
+		Max:          maxB,
+		Min:          minB,
 		Sum:          3,
 	}
 	histogramDataPointC = metricdata.HistogramDataPoint{
@@ -101,6 +104,7 @@ var (
 		Count:        2,
 		Bounds:       []float64{0, 10},
 		BucketCounts: []uint64{1, 1},
+		Min:          minC,
 		Sum:          2,
 	}
 
@@ -170,19 +174,19 @@ var (
 	metricsA = metricdata.Metrics{
 		Name:        "A",
 		Description: "A desc",
-		Unit:        unit.Dimensionless,
+		Unit:        "1",
 		Data:        sumInt64A,
 	}
 	metricsB = metricdata.Metrics{
 		Name:        "B",
 		Description: "B desc",
-		Unit:        unit.Bytes,
+		Unit:        "By",
 		Data:        gaugeFloat64B,
 	}
 	metricsC = metricdata.Metrics{
 		Name:        "A",
 		Description: "A desc",
-		Unit:        unit.Dimensionless,
+		Unit:        "1",
 		Data:        sumInt64C,
 	}
 
@@ -247,6 +251,7 @@ func TestAssertEqual(t *testing.T) {
 	t.Run("HistogramDataPoint", testDatatype(histogramDataPointA, histogramDataPointB, equalHistogramDataPoints))
 	t.Run("DataPointInt64", testDatatype(dataPointInt64A, dataPointInt64B, equalDataPoints[int64]))
 	t.Run("DataPointFloat64", testDatatype(dataPointFloat64A, dataPointFloat64B, equalDataPoints[float64]))
+	t.Run("Extrema", testDatatype(minA, minB, equalExtrema))
 }
 
 func TestAssertEqualIgnoreTime(t *testing.T) {
@@ -261,6 +266,7 @@ func TestAssertEqualIgnoreTime(t *testing.T) {
 	t.Run("HistogramDataPoint", testDatatypeIgnoreTime(histogramDataPointA, histogramDataPointC, equalHistogramDataPoints))
 	t.Run("DataPointInt64", testDatatypeIgnoreTime(dataPointInt64A, dataPointInt64C, equalDataPoints[int64]))
 	t.Run("DataPointFloat64", testDatatypeIgnoreTime(dataPointFloat64A, dataPointFloat64C, equalDataPoints[float64]))
+	t.Run("Extrema", testDatatypeIgnoreTime(minA, minC, equalExtrema))
 }
 
 type unknownAggregation struct {
@@ -316,6 +322,7 @@ func TestAssertAggregationsEqual(t *testing.T) {
 }
 
 func TestAssertAttributes(t *testing.T) {
+	AssertHasAttributes(t, minA, attribute.Bool("A", true)) // No-op, always pass.
 	AssertHasAttributes(t, dataPointInt64A, attribute.Bool("A", true))
 	AssertHasAttributes(t, dataPointFloat64A, attribute.Bool("A", true))
 	AssertHasAttributes(t, gaugeInt64A, attribute.Bool("A", true))

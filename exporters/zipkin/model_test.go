@@ -32,14 +32,14 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestModelConversion(t *testing.T) {
 	res := resource.NewSchemaless(
-		semconv.ServiceNameKey.String("model-test"),
-		semconv.ServiceVersionKey.String("0.1.0"),
+		semconv.ServiceName("model-test"),
+		semconv.ServiceVersion("0.1.0"),
 		attribute.Int64("resource-attr1", 42),
 		attribute.IntSlice("resource-attr2", []int{0, 1, 2}),
 	)
@@ -291,8 +291,8 @@ func TestModelConversion(t *testing.T) {
 				attribute.Int64("attr1", 42),
 				attribute.String("attr2", "bar"),
 				attribute.String("peer.hostname", "test-peer-hostname"),
-				attribute.String("net.peer.ip", "1.2.3.4"),
-				attribute.Int64("net.peer.port", 9876),
+				attribute.String("net.sock.peer.addr", "1.2.3.4"),
+				attribute.Int64("net.sock.peer.port", 9876),
 			},
 			Events: []tracesdk.Event{
 				{
@@ -745,17 +745,17 @@ func TestModelConversion(t *testing.T) {
 				},
 			},
 			Tags: map[string]string{
-				"attr1":            "42",
-				"attr2":            "bar",
-				"net.peer.ip":      "1.2.3.4",
-				"net.peer.port":    "9876",
-				"peer.hostname":    "test-peer-hostname",
-				"otel.status_code": "ERROR",
-				"error":            "404, file not found",
-				"service.name":     "model-test",
-				"service.version":  "0.1.0",
-				"resource-attr1":   "42",
-				"resource-attr2":   "[0,1,2]",
+				"attr1":              "42",
+				"attr2":              "bar",
+				"net.sock.peer.addr": "1.2.3.4",
+				"net.sock.peer.port": "9876",
+				"peer.hostname":      "test-peer-hostname",
+				"otel.status_code":   "ERROR",
+				"error":              "404, file not found",
+				"service.name":       "model-test",
+				"service.version":    "0.1.0",
+				"resource-attr1":     "42",
+				"resource-attr2":     "[0,1,2]",
 			},
 		},
 		// model for span data of producer kind
@@ -1095,9 +1095,9 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 			data: tracetest.SpanStub{
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
-					semconv.PeerServiceKey.String("peer-service-test"),
-					semconv.NetPeerNameKey.String("peer-name-test"),
-					semconv.HTTPHostKey.String("http-host-test"),
+					semconv.PeerService("peer-service-test"),
+					semconv.NetPeerName("peer-name-test"),
+					semconv.NetSockPeerName("net-sock-peer-test"),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1105,16 +1105,16 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 			},
 		},
 		{
-			name: "http-host-rank",
+			name: "net-sock-peer-rank",
 			data: tracetest.SpanStub{
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
-					semconv.HTTPHostKey.String("http-host-test"),
-					semconv.DBNameKey.String("db-name-test"),
+					semconv.NetSockPeerName("net-sock-peer-test"),
+					semconv.DBName("db-name-test"),
 				},
 			},
 			want: &zkmodel.Endpoint{
-				ServiceName: "http-host-test",
+				ServiceName: "net-sock-peer-test",
 			},
 		},
 		{
@@ -1123,7 +1123,7 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
 					attribute.String("foo", "bar"),
-					semconv.DBNameKey.String("db-name-test"),
+					semconv.DBName("db-name-test"),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1137,8 +1137,7 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 				Attributes: []attribute.KeyValue{
 					keyPeerHostname.String("peer-hostname-test"),
 					keyPeerAddress.String("peer-address-test"),
-					semconv.HTTPHostKey.String("http-host-test"),
-					semconv.DBNameKey.String("http-host-test"),
+					semconv.DBName("http-host-test"),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1151,8 +1150,7 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
 					keyPeerAddress.String("peer-address-test"),
-					semconv.HTTPHostKey.String("http-host-test"),
-					semconv.DBNameKey.String("http-host-test"),
+					semconv.DBName("http-host-test"),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1164,7 +1162,7 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 			data: tracetest.SpanStub{
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
-					semconv.NetPeerIPKey.String("INVALID"),
+					semconv.NetSockPeerAddr("INVALID"),
 				},
 			},
 			want: nil,
@@ -1174,7 +1172,7 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 			data: tracetest.SpanStub{
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
-					semconv.NetPeerIPKey.String("0:0:1:5ee:bad:c0de:0:0"),
+					semconv.NetSockPeerAddr("0:0:1:5ee:bad:c0de:0:0"),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1186,8 +1184,8 @@ func TestRemoteEndpointTransformation(t *testing.T) {
 			data: tracetest.SpanStub{
 				SpanKind: trace.SpanKindProducer,
 				Attributes: []attribute.KeyValue{
-					semconv.NetPeerIPKey.String("1.2.3.4"),
-					semconv.NetPeerPortKey.Int(9876),
+					semconv.NetSockPeerAddr("1.2.3.4"),
+					semconv.NetSockPeerPort(9876),
 				},
 			},
 			want: &zkmodel.Endpoint{
@@ -1213,6 +1211,6 @@ func TestServiceName(t *testing.T) {
 	attrs = append(attrs, attribute.String("test_key", "test_value"))
 	assert.Equal(t, defaultServiceName, getServiceName(attrs))
 
-	attrs = append(attrs, semconv.ServiceNameKey.String("my_service"))
+	attrs = append(attrs, semconv.ServiceName("my_service"))
 	assert.Equal(t, "my_service", getServiceName(attrs))
 }

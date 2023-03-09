@@ -22,21 +22,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric/unit"
 )
 
 func TestInt64ObserverOptions(t *testing.T) {
 	const (
 		token  int64 = 43
 		desc         = "Instrument description."
-		uBytes       = unit.Bytes
+		uBytes       = "By"
 	)
 
 	got := NewInt64ObserverConfig(
 		WithDescription(desc),
 		WithUnit(uBytes),
-		WithInt64Callback(func(ctx context.Context, o Int64Observer) error {
-			o.Observe(ctx, token)
+		WithInt64Callback(func(_ context.Context, obsrv Int64Observer) error {
+			obsrv.Observe(token)
 			return nil
 		}),
 	)
@@ -57,6 +56,6 @@ type int64Observer struct {
 	got int64
 }
 
-func (o *int64Observer) Observe(_ context.Context, v int64, _ ...attribute.KeyValue) {
+func (o *int64Observer) Observe(v int64, _ ...attribute.KeyValue) {
 	o.got = v
 }

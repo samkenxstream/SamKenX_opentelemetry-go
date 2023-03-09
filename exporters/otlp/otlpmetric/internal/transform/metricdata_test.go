@@ -22,11 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric/unit"
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 	cpb "go.opentelemetry.io/proto/otlp/common/v1"
 	mpb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	rpb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -60,8 +59,8 @@ var (
 		Count:        30,
 		Bounds:       []float64{1, 5},
 		BucketCounts: []uint64{0, 30, 0},
-		Min:          &minA,
-		Max:          &maxA,
+		Min:          metricdata.NewExtrema(minA),
+		Max:          metricdata.NewExtrema(maxA),
 		Sum:          sumA,
 	}, {
 		Attributes:   bob,
@@ -70,8 +69,8 @@ var (
 		Count:        3,
 		Bounds:       []float64{1, 5},
 		BucketCounts: []uint64{0, 1, 2},
-		Min:          &minB,
-		Max:          &maxB,
+		Min:          metricdata.NewExtrema(minB),
+		Max:          metricdata.NewExtrema(maxB),
 		Sum:          sumB,
 	}}
 
@@ -188,49 +187,49 @@ var (
 		{
 			Name:        "int64-gauge",
 			Description: "Gauge with int64 values",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelGaugeInt64,
 		},
 		{
 			Name:        "float64-gauge",
 			Description: "Gauge with float64 values",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelGaugeFloat64,
 		},
 		{
 			Name:        "int64-sum",
 			Description: "Sum with int64 values",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelSumInt64,
 		},
 		{
 			Name:        "float64-sum",
 			Description: "Sum with float64 values",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelSumFloat64,
 		},
 		{
 			Name:        "invalid-sum",
 			Description: "Sum with invalid temporality",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelSumInvalid,
 		},
 		{
 			Name:        "histogram",
 			Description: "Histogram",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelHist,
 		},
 		{
 			Name:        "invalid-histogram",
 			Description: "Invalid histogram",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        otelHistInvalid,
 		},
 		{
 			Name:        "unknown",
 			Description: "Unknown aggregation",
-			Unit:        unit.Dimensionless,
+			Unit:        "1",
 			Data:        unknownAgg,
 		},
 	}
@@ -239,31 +238,31 @@ var (
 		{
 			Name:        "int64-gauge",
 			Description: "Gauge with int64 values",
-			Unit:        string(unit.Dimensionless),
+			Unit:        "1",
 			Data:        &mpb.Metric_Gauge{Gauge: pbGaugeInt64},
 		},
 		{
 			Name:        "float64-gauge",
 			Description: "Gauge with float64 values",
-			Unit:        string(unit.Dimensionless),
+			Unit:        "1",
 			Data:        &mpb.Metric_Gauge{Gauge: pbGaugeFloat64},
 		},
 		{
 			Name:        "int64-sum",
 			Description: "Sum with int64 values",
-			Unit:        string(unit.Dimensionless),
+			Unit:        "1",
 			Data:        &mpb.Metric_Sum{Sum: pbSumInt64},
 		},
 		{
 			Name:        "float64-sum",
 			Description: "Sum with float64 values",
-			Unit:        string(unit.Dimensionless),
+			Unit:        "1",
 			Data:        &mpb.Metric_Sum{Sum: pbSumFloat64},
 		},
 		{
 			Name:        "histogram",
 			Description: "Histogram",
-			Unit:        string(unit.Dimensionless),
+			Unit:        "1",
 			Data:        &mpb.Metric_Histogram{Histogram: pbHist},
 		},
 	}
@@ -288,8 +287,8 @@ var (
 
 	otelRes = resource.NewWithAttributes(
 		semconv.SchemaURL,
-		semconv.ServiceNameKey.String("test server"),
-		semconv.ServiceVersionKey.String("v0.1.0"),
+		semconv.ServiceName("test server"),
+		semconv.ServiceVersion("v0.1.0"),
 	)
 
 	pbRes = &rpb.Resource{
